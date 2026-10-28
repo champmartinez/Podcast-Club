@@ -1,0 +1,188 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Podcast Club</title>
+<style>
+:root{--bg:#faf7f2;--card:#fff;--ink:#1f1b16;--mute:#7a7167;--line:#e6dfd4;--acc:#c2410c;--star:#e8a317}
+@media (prefers-color-scheme:dark){:root{--bg:#17140f;--card:#221e18;--ink:#f3ede4;--mute:#a1978a;--line:#363028;--acc:#fb923c;--star:#f5b83d;color-scheme:dark}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.45 system-ui,-apple-system,"Segoe UI",sans-serif}
+main{max-width:640px;margin:0 auto;padding:16px;padding-bottom:calc(16px + env(safe-area-inset-bottom,0px))}
+h1{font-size:26px;margin:8px 0 2px}
+.sub{color:var(--mute);margin:0 0 14px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:14px;padding:14px;margin-bottom:12px}
+input,textarea,select{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:10px;padding:10px;margin-bottom:8px}
+button{font:inherit;border:0;border-radius:10px;padding:10px 14px;background:var(--acc);color:#fff;cursor:pointer}
+button.ghost{background:transparent;color:var(--acc);border:1px solid var(--line)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+.tabs{display:flex;gap:6px;margin:10px 0}
+.tabs button{flex:1;background:var(--card);color:var(--ink);border:1px solid var(--line)}
+.tabs button.on{background:var(--acc);color:#fff;border-color:var(--acc)}
+.rank{font-weight:700;color:var(--acc);width:28px}
+.title{font-weight:650}
+.meta{color:var(--mute);font-size:14px}
+.stars{color:var(--star);letter-spacing:2px;white-space:nowrap}
+.stars button{background:none;color:var(--star);padding:2px 3px;font-size:26px;line-height:1}
+.rev{border-top:1px solid var(--line);padding:8px 0;font-size:15px}
+.note{color:var(--mute);font-size:14px;padding:8px 0}
+.err{color:#c0392b;font-size:14px;min-height:20px}
+.hide{display:none!important}
+</style></head>
+<body><main>
+<div class="row" style="justify-content:space-between"><h1>Podcast Club</h1><div id="me" class="hide row"><span id="who" class="meta"></span><button class="ghost" id="out">Sign out</button></div></div>
+<p class="sub">Rank, review and share what we’re listening to.</p>
+
+<div id="setup" class="card hide"><div class="title">Almost there</div><p class="meta">Open <code>index.html</code> and paste your Firebase settings into <code>firebaseConfig</code>. The README walks through it.</p></div>
+
+<div id="auth" class="card hide">
+  <div class="title" style="margin-bottom:8px">Join or sign in</div>
+  <input id="nm" placeholder="Display name (new accounts only)" maxlength="40">
+  <input id="em" type="email" placeholder="Email" autocomplete="email">
+  <input id="pw" type="password" placeholder="Password (6+ characters)" autocomplete="current-password">
+  <div class="err" id="aerr"></div>
+  <div class="row"><button id="signin">Sign in</button><button class="ghost" id="signup">Create account</button><button class="ghost" id="goog">Continue with Google</button></div>
+</div>
+
+<div id="app" class="hide">
+<div id="note" class="note hide"></div>
+<div class="tabs" id="vt"><button data-v="pods" class="on">Podcasts</button><button data-v="feed">Feed</button><button data-v="people">People</button></div>
+<div class="card" id="addcard">
+  <div class="title" style="margin-bottom:8px">Add a podcast</div>
+  <input id="t" placeholder="Podcast title" maxlength="120">
+  <input id="h" placeholder="Host or network (optional)" maxlength="80">
+  <select id="g"><option value="">Genre (optional)</option><option value="Entertainment">Entertainment</option><option value="Self development">Self development</option></select>
+  <input id="u" type="url" placeholder="Link to the podcast (optional)">
+  <button id="add">Add to the club</button>
+</div>
+<div class="tabs" id="st"><button data-s="avg" class="on">Top rated</button><button data-s="new">Newest</button><button data-s="mine">My ratings</button></div>
+<div id="list"></div>
+</div>
+</main>
+<script type="module">
+import {initializeApp} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-app.js";
+import {getAuth,onAuthStateChanged,createUserWithEmailAndPassword,signInWithEmailAndPassword,signInWithPopup,GoogleAuthProvider,updateProfile,signOut} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-auth.js";
+import {getFirestore,collection,doc,setDoc,updateDoc,addDoc,onSnapshot} from "https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore.js";
+
+// ===== Paste your Firebase web app settings here (Project settings > Your apps) =====
+const firebaseConfig={
+  apiKey:"AIzaSyAk50CjxVKbudxvT1TybRE26JUZtRy2eao",
+  authDomain:"podcast-club-39753.firebaseapp.com",
+  projectId:"podcast-club-39753",
+  appId:"1:461097295977:web:064a1a273e7767705c02f8"
+};
+// ====================================================================================
+
+const $=s=>document.querySelector(s);
+const esc=s=>String(s==null?'':s).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const safeUrl=u=>{if(!u)return'';if(!/^https?:\/\//i.test(u))u='https://'+u;try{const x=new URL(u);return /^https?:$/.test(x.protocol)?x.href:''}catch(e){return''}};
+const stars=n=>'★'.repeat(n)+'☆'.repeat(5-n);
+const ago=t=>{if(!t)return'';const m=Math.floor((Date.now()-t)/6e4);if(m<1)return'just now';if(m<60)return m+'m ago';const h=Math.floor(m/60);if(h<24)return h+'h ago';const d=Math.floor(h/24);return d<30?d+'d ago':new Date(t).toLocaleDateString()};
+let auth,db,me=null,pods=[],revs=[],names={},sort='avg',view='pods',who=null,open=null,draft={},unsubs=[];
+const note=t=>{const n=$('#note');n.textContent=t;n.classList.toggle('hide',!t)};
+const nm=id=>id===me?'You':(names[id]||'Someone');
+const stats=p=>{const rs=revs.filter(r=>r.pid===p.id);return{rs,avg:rs.length?rs.reduce((a,r)=>a+r.rating,0)/rs.length:0,mine:rs.find(r=>r.uid===me)}};
+
+function renderFeed(){
+  const pt=id=>pods.find(p=>p.id===id);
+  const ev=[].concat(pods.map(p=>({ts:p.ts||0,who:p.by,pid:p.id,k:'add'})),revs.map(r=>({ts:r.ts||0,who:r.uid,pid:r.pid,k:'rev',r}))).filter(e=>pt(e.pid)).sort((a,b)=>b.ts-a.ts).slice(0,50);
+  $('#list').innerHTML=ev.length?ev.map(e=>{const p=pt(e.pid);return `<div class="card" data-go="${esc(p.id)}" style="cursor:pointer"><div class="meta"><b>${esc(nm(e.who))}</b> ${e.k==='add'?'added':(e.r.text?'reviewed':'rated')} · ${ago(e.ts)}</div><div class="title">${esc(p.title)}</div>${e.k==='rev'?`<div class="stars">${stars(e.r.rating)}</div>${e.r.text?'<div>'+esc(e.r.text)+'</div>':''}`:''}</div>`}).join(''):'<div class="note">Nothing yet. Add or rate a podcast to start the feed.</div>';
+}
+function renderPeople(){
+  const L=$('#list');
+  if(who){
+    const rs=revs.filter(r=>r.uid===who).sort((a,b)=>(b.ts||0)-(a.ts||0));
+    L.innerHTML=`<div class="row" style="margin-bottom:10px"><button class="ghost" data-back="1">← Everyone</button></div><div class="card"><div class="title" style="font-size:20px">${who===me?'Your profile':esc(nm(who))}</div><div class="meta">${rs.length} listened · ${pods.filter(p=>p.by===who).length} added</div></div>`+(rs.length?rs.map(r=>{const p=pods.find(x=>x.id===r.pid);if(!p)return'';return `<div class="card" data-go="${esc(p.id)}" style="cursor:pointer"><div class="row"><div style="flex:1;min-width:0"><div class="title">${esc(p.title)}</div><div class="meta">${ago(r.ts)}</div></div><div class="stars">${stars(r.rating)}</div></div>${r.text?'<div>'+esc(r.text)+'</div>':''}</div>`}).join(''):'<div class="note">Nothing listened to yet.</div>');
+    return}
+  const ids=Object.keys(names).sort((a,b)=>(b===me)-(a===me));
+  L.innerHTML=ids.length?ids.map(id=>{const rs=revs.filter(r=>r.uid===id),n=rs.length,avg=n?(rs.reduce((a,r)=>a+r.rating,0)/n).toFixed(1):'–';return `<div class="card" data-who="${esc(id)}" style="cursor:pointer"><div class="row"><div style="flex:1"><div class="title">${esc(nm(id))}</div><div class="meta">${n} listened · avg ${avg}</div></div><div class="meta">›</div></div></div>`}).join(''):'<div class="note">No one yet.</div>';
+}
+function render(){
+  $('#addcard').classList.toggle('hide',view!=='pods');$('#st').classList.toggle('hide',view!=='pods');
+  if(view==='feed')return renderFeed();if(view==='people')return renderPeople();
+  let items=pods.map(p=>({p,...stats(p)}));
+  if(sort==='avg')items.sort((a,b)=>b.avg-a.avg||b.rs.length-a.rs.length);
+  else if(sort==='new')items.sort((a,b)=>(b.p.ts||0)-(a.p.ts||0));
+  else items=items.filter(x=>x.mine).sort((a,b)=>b.mine.rating-a.mine.rating);
+  const L=$('#list');
+  if(!items.length){L.innerHTML='<div class="note">'+(sort==='mine'?'You haven’t rated anything yet.':'No podcasts yet. Add the first one above.')+'</div>';return}
+  L.innerHTML=items.map((x,i)=>{
+    const p=x.p,isOpen=open===p.id,d=draft[p.id]||{rating:x.mine?x.mine.rating:0,text:x.mine?x.mine.text:''};
+    return `<div class="card" data-id="${esc(p.id)}">
+      <div class="row" data-toggle="${esc(p.id)}" style="cursor:pointer">
+        <div class="rank">${sort==='avg'?i+1:''}</div>
+        <div style="flex:1;min-width:0"><div class="title">${esc(p.title)}</div>
+        <div class="meta">${esc([p.host,p.genre].filter(Boolean).join(' · '))}${p.by?(p.host||p.genre?' · ':'')+'added by '+esc(nm(p.by)):''}</div></div>
+        <div style="text-align:right"><div class="stars">${x.rs.length?stars(Math.round(x.avg)):'☆☆☆☆☆'}</div>
+        <div class="meta">${x.rs.length?x.avg.toFixed(1)+' · '+x.rs.length+(x.rs.length>1?' reviews':' review'):'unrated'}</div></div>
+      </div>
+      ${isOpen?`<div style="margin-top:10px">
+        ${safeUrl(p.link)?`<div class="rev"><a href="${esc(safeUrl(p.link))}" target="_blank" rel="noopener noreferrer" style="color:var(--acc)">▶ Listen</a></div>`:`<div class="rev"><div class="row"><input data-linkin="${esc(p.id)}" type="url" placeholder="Add a link to this podcast" style="flex:1;margin:0"><button data-addlink="${esc(p.id)}">Add</button></div></div>`}
+        ${x.rs.map(r=>`<div class="rev"><span class="stars">${stars(r.rating)}</span> <b>${esc(nm(r.uid))}</b>${r.text?'<div>'+esc(r.text)+'</div>':''}</div>`).join('')}
+        <div class="rev"><div class="title">${x.mine?'Update your review':'Your review'}</div>
+        <div class="stars">${[1,2,3,4,5].map(n=>`<button data-star="${n}" aria-label="${n} stars">${n<=d.rating?'★':'☆'}</button>`).join('')}</div>
+        <textarea rows="2" maxlength="1000" placeholder="What did you think? Which episode should we start with?">${esc(d.text)}</textarea>
+        <div class="row"><button data-save="${esc(p.id)}">Save review</button><button class="ghost" data-share="${esc(p.id)}">Share</button></div></div>
+      </div>`:''}
+    </div>`}).join('');
+}
+
+document.addEventListener('click',async e=>{
+  const t=e.target.closest('[data-toggle],[data-star],[data-save],[data-share],[data-addlink],[data-s],[data-v],[data-who],[data-back],[data-go]');
+  if(!t)return;
+  const tabs=(sel,fn)=>document.querySelectorAll(sel+' button').forEach(b=>b.classList.toggle('on',fn(b)));
+  if(t.dataset.v){view=t.dataset.v;who=null;tabs('#vt',b=>b===t);render();return}
+  if(t.dataset.who){who=t.dataset.who;render();return}
+  if(t.dataset.back){who=null;render();return}
+  if(t.dataset.go){view='pods';open=t.dataset.go;tabs('#vt',b=>b.dataset.v==='pods');render();return}
+  if(t.dataset.s){sort=t.dataset.s;tabs('#st',b=>b===t);render();return}
+  if(t.dataset.toggle){if(e.target.closest('textarea'))return;open=open===t.dataset.toggle?null:t.dataset.toggle;render();return}
+  const card=t.closest('[data-id]');if(!card)return;const id=card.dataset.id;
+  if(t.dataset.addlink){const u=safeUrl(card.querySelector('[data-linkin]').value.trim());if(!u){note('Enter a valid link.');return}
+    try{await updateDoc(doc(db,'podcasts',id),{link:u});note('')}catch(err){note('Couldn’t save the link.')}return}
+  if(t.dataset.star){const ta=card.querySelector('textarea');draft[id]={rating:+t.dataset.star,text:ta?ta.value:''};render();return}
+  if(t.dataset.share){
+    const p=pods.find(x=>x.id===id),s=stats(p);
+    const txt='Listening to '+p.title+(s.rs.length?' — '+s.avg.toFixed(1)+'/5 in our club':'')+'. Check it out!'+(safeUrl(p.link)?' '+safeUrl(p.link):'');
+    try{if(navigator.share)await navigator.share({text:txt});else{await navigator.clipboard.writeText(txt);note('Copied to clipboard.')}}catch(_){}
+    return}
+  if(t.dataset.save){
+    const ta=card.querySelector('textarea'),x=stats(pods.find(p=>p.id===id));
+    const rating=(draft[id]&&draft[id].rating)||(x.mine&&x.mine.rating)||0;
+    if(!rating){note('Tap a star rating first.');return}
+    try{await setDoc(doc(db,'reviews',id+'__'+me),{pid:id,uid:me,rating,text:ta.value.trim(),ts:Date.now()});delete draft[id];note('')}
+    catch(err){note('Couldn’t save your review. Try again.')}
+  }
+});
+
+$('#add').onclick=async()=>{
+  const title=$('#t').value.trim();if(!title)return;
+  try{await addDoc(collection(db,'podcasts'),{title,host:$('#h').value.trim(),genre:$('#g').value,link:safeUrl($('#u').value.trim()),by:me,ts:Date.now()});
+    ['#t','#h','#g','#u'].forEach(s=>$(s).value='');note('')}
+  catch(err){note('Couldn’t add that podcast. Try again.')}
+};
+
+if(firebaseConfig.apiKey.startsWith('YOUR_')){
+  $('#setup').classList.remove('hide');
+}else{
+  const fb=initializeApp(firebaseConfig);auth=getAuth(fb);db=getFirestore(fb);
+  const amsg=t=>$('#aerr').textContent=t||'';
+  const errMsg=e=>({'auth/invalid-credential':'Wrong email or password.','auth/email-already-in-use':'That email already has an account. Try signing in.','auth/weak-password':'Use a password with at least 6 characters.','auth/invalid-email':'That email doesn’t look right.','auth/popup-closed-by-user':''}[e.code]??'Something went wrong. Try again.');
+  $('#signin').onclick=async()=>{amsg();try{await signInWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value)}catch(e){amsg(errMsg(e))}};
+  $('#signup').onclick=async()=>{amsg();const n=$('#nm').value.trim();if(!n){amsg('Pick a display name first.');return}
+    try{const c=await createUserWithEmailAndPassword(auth,$('#em').value.trim(),$('#pw').value);await updateProfile(c.user,{displayName:n});await setDoc(doc(db,'users',c.user.uid),{name:n,ts:Date.now()})}catch(e){amsg(errMsg(e))}};
+  $('#goog').onclick=async()=>{amsg();try{await signInWithPopup(auth,new GoogleAuthProvider())}catch(e){amsg(errMsg(e))}};
+  $('#out').onclick=()=>signOut(auth);
+
+  onAuthStateChanged(auth,u=>{
+    unsubs.forEach(f=>f());unsubs=[];me=u?u.uid:null;
+    $('#auth').classList.toggle('hide',!!u);$('#app').classList.toggle('hide',!u);$('#me').classList.toggle('hide',!u);
+    if(!u){pods=[];revs=[];names={};return}
+    $('#who').textContent=u.displayName||u.email;
+    const err=()=>note('Couldn’t load the latest. Check your connection.');
+    unsubs.push(onSnapshot(collection(db,'users'),s=>{names={};s.forEach(d=>names[d.id]=d.data().name);render();
+      if(!names[me])setTimeout(()=>{if(auth.currentUser&&!names[me])setDoc(doc(db,'users',me),{name:auth.currentUser.displayName||(auth.currentUser.email||'Listener').split('@')[0],ts:Date.now()}).catch(()=>{})},2500)},err));
+    unsubs.push(onSnapshot(collection(db,'podcasts'),s=>{pods=s.docs.map(d=>({id:d.id,...d.data()}));render()},err));
+    unsubs.push(onSnapshot(collection(db,'reviews'),s=>{revs=s.docs.map(d=>d.data());render()},err));
+  });
+}
+</script></body></html>
